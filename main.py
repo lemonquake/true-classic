@@ -4,6 +4,8 @@ Author: Aljay Leodones
 Organization: True Classic
 """
 
+import math
+import datetime
 import discord
 from discord.ext import commands
 import config
@@ -15,9 +17,11 @@ class TrueClassicBot(commands.Bot):
         intents = discord.Intents.default()
         intents.members = True  # Required for onboarding scanning and join reconciliation
         intents.message_content = True  # Message content intent for engagement tracking
-        
+
         super().__init__(command_prefix="!", intents=intents)
         self.database = Database()
+        self.start_time = datetime.datetime.now(datetime.timezone.utc)  # Surfaced as panel uptime
+        self._panels_restored = False
 
     async def setup_hook(self):
         # 1. Connect database & run table migrations
@@ -28,7 +32,8 @@ class TrueClassicBot(commands.Bot):
             "modules.mod_panel",
             "modules.onboarding",
             "modules.member_report",
-            "modules.scheduled_messages"
+            "modules.scheduled_messages",
+            "modules.summarizer"
         ]
         for ext in extensions:
             await self.load_extension(ext)
@@ -47,7 +52,8 @@ class TrueClassicBot(commands.Bot):
         print("========================================")
         print(f"Logged in as: {self.user.name} ({self.user.id})")
         print(f"Status: Online")
-        print(f"Latency: {round(self.latency * 1000)}ms")
+        # latency is NaN until the first heartbeat ack; round() would raise and abort on_ready.
+        print(f"Latency: {'pending' if math.isnan(self.latency) else str(round(self.latency * 1000)) + 'ms'}")
         
         if not self.intents.members:
             print("[Warning] Server Members Intent is disabled. Onboarding scan will not work.")
@@ -63,7 +69,18 @@ class TrueClassicBot(commands.Bot):
             print(f"[System] Successfully synced {len(synced)} command(s) globally.")
         except Exception as e:
             print(f"[Error] Failed to sync command tree: {str(e)}")
-            
+
+        # Revive every previously summoned Mod Panel with fresh state. Guarded so a
+        # gateway reconnect (which re-fires on_ready) doesn't re-edit every panel.
+        if not self._panels_restored:
+            self._panels_restored = True
+            from modules.mod_panel import restore_panels
+            try:
+                restored, pruned, failed = await restore_panels(self)
+                print(f"[System] Mod Panels restored: {restored} live, {pruned} pruned, {failed} failed.")
+            except Exception as e:
+                print(f"[Error] Failed to restore Mod Panels: {str(e)}")
+
         print("========================================")
 
 def main():

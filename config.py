@@ -16,6 +16,13 @@ AUTHORIZED_ROLES_RAW = os.getenv("AUTHORIZED_ROLES", "")
 ONBOARDING_CHANNEL_ID = int(os.getenv("ONBOARDING_CHANNEL_ID", "0")) if os.getenv("ONBOARDING_CHANNEL_ID", "").isdigit() else 0
 INTRODUCTIONS_CHANNEL_ID = int(os.getenv("INTRODUCTIONS_CHANNEL_ID", "0")) if os.getenv("INTRODUCTIONS_CHANNEL_ID", "").isdigit() else 0
 
+# Destination channel for Summarizer reports (override via .env if it ever moves)
+SUMMARY_REPORT_CHANNEL_ID = (
+    int(os.getenv("SUMMARY_REPORT_CHANNEL_ID"))
+    if os.getenv("SUMMARY_REPORT_CHANNEL_ID", "").isdigit()
+    else 1521574949238603906
+)
+
 # Parse authorized roles as list of integers
 AUTHORIZED_ROLES = []
 if AUTHORIZED_ROLES_RAW:

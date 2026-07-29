@@ -101,6 +101,45 @@ class Database:
                 created_at     TEXT DEFAULT (datetime('now')),
                 sent_at        TEXT DEFAULT NULL
             );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS summarizer_runs (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id          INTEGER NOT NULL,
+                group_key         TEXT NOT NULL,   -- 'inner_circle' or 'academy'
+                timeframe         TEXT NOT NULL,   -- 'today' / '7d' / '30d'
+                requested_by      INTEGER NOT NULL,
+                channels_scanned  INTEGER NOT NULL DEFAULT 0,
+                messages_scanned  INTEGER NOT NULL DEFAULT 0,
+                needs_reply       INTEGER NOT NULL DEFAULT 0,
+                follow_up         INTEGER NOT NULL DEFAULT 0,
+                no_activity       INTEGER NOT NULL DEFAULT 0,
+                report_channel_id INTEGER,
+                report_message_id INTEGER,
+                created_at        TEXT DEFAULT (datetime('now'))
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS mod_panels (
+                message_id INTEGER PRIMARY KEY,   -- The live control panel message
+                guild_id   INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                created_by INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS summarizer_channel_state (
+                guild_id         INTEGER NOT NULL,
+                channel_id       INTEGER NOT NULL,
+                group_key        TEXT NOT NULL,
+                last_message_id  INTEGER,
+                last_message_at  TEXT,             -- ISO 8601 UTC of newest message seen
+                last_status      TEXT,             -- triage bucket at last report
+                last_reported_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (guild_id, channel_id)
+            );
             """
         ]
         for query in queries:
