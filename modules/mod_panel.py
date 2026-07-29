@@ -74,7 +74,7 @@ class ModPanelCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def reload_bot_system(bot: commands.Bot) -> tuple[list[str], list[str]]:
-    modules = ["modules.mod_panel", "modules.onboarding", "modules.member_report"]
+    modules = ["modules.mod_panel", "modules.onboarding", "modules.member_report", "modules.scheduled_messages"]
     reloaded = []
     errors = []
     
@@ -123,6 +123,14 @@ class ModPanelView(discord.ui.View):
         template_count = 0
         if os.path.exists("templates"):
             template_count = len([f for f in os.listdir("templates") if f.endswith(".json")])
+
+        pending_scheduled = 0
+        try:
+            rows = await self.bot.database.fetchall("SELECT COUNT(*) as cnt FROM scheduled_messages WHERE status = 'pending'")
+            if rows:
+                pending_scheduled = rows[0]["cnt"]
+        except Exception:
+            pass
             
         embed = embed_builder.base_embed(
             title="True Classic • Control Panel",
@@ -135,6 +143,7 @@ class ModPanelView(discord.ui.View):
             f"✓ {'Database (SQLite)':<20} \u001b[0;32mONLINE\u001b[0m\n"
             f"✓ {'Gateway Latency':<20} \u001b[0;33m{latency}ms\u001b[0m\n"
             f"✓ {'Embed Templates':<20} \u001b[0;36m{template_count} Loaded\u001b[0m\n"
+            f"✓ {'Pending Schedules':<20} \u001b[0;35m{pending_scheduled} Active\u001b[0m\n"
             "```"
         )
         embed.add_field(name="🩺 System Health & Status", value=health_block, inline=False)
@@ -143,7 +152,9 @@ class ModPanelView(discord.ui.View):
             value=(
                 "**Embed Editor**: Compose multi-embed broadcasts with dynamic hydrators.\n"
                 "**Member Onboarding**: Scan 30-day un-onboarded members & send deep-link DMs.\n"
-                "**Member Report**: Deploy self-updating daily/weekly/monthly growth reports.\n\n"
+                "**Member Report**: Deploy self-updating daily/weekly/monthly growth reports.\n"
+                "**Scheduled Messages**: Schedule broadcasts with timezones, 5-min intervals & multi-channel targeting.\n\n"
+                "🔄 **Update Panel**: Instantly refreshes panel state and live system metrics.\n"
                 "🔄 **Reload Bot & Updates**: Hot-reloads all bot code, cogs, and slash commands without offline downtime."
             ),
             inline=False
@@ -193,9 +204,17 @@ class ModPanelView(discord.ui.View):
         embed = await hub_view.get_hub_embed(interaction.guild)
         await interaction.response.edit_message(embed=embed, view=hub_view)
 
-    @discord.ui.button(label="Refresh Dashboard", style=discord.ButtonStyle.secondary, row=1, custom_id="mod_panel:refresh_dashboard")
-    async def refresh_dashboard(self, interaction: discord.Interaction, button: discord.ui.Button):
-        print(f"[Mod Panel] {interaction.user} refreshed the dashboard")
+    @discord.ui.button(label="📅 Scheduled Messages", style=discord.ButtonStyle.blurple, row=0, custom_id="mod_panel:scheduled_messages")
+    async def scheduled_messages(self, interaction: discord.Interaction, button: discord.ui.Button):
+        print(f"[Mod Panel] {interaction.user} selected Scheduled Messages")
+        from modules.scheduled_messages import ScheduledMessagesHubView
+        hub_view = ScheduledMessagesHubView(self.bot, self)
+        embed = await hub_view.build_hub_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=hub_view)
+
+    @discord.ui.button(label="🔄 Update Panel", style=discord.ButtonStyle.secondary, row=1, custom_id="mod_panel:update_panel")
+    async def update_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        print(f"[Mod Panel] {interaction.user} updated the control panel")
         await self.show_panel(interaction)
 
     @discord.ui.button(label="🔄 Reload Bot & Updates", style=discord.ButtonStyle.success, row=1, custom_id="mod_panel:reload_bot")

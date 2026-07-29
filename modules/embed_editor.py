@@ -852,6 +852,17 @@ class EmbedEditorHubView(SecuredView):
         status_msg = "\n".join(status_lines) if status_lines else "No channels processed."
         await interaction.response.send_message(f"**Post Status:**\n{status_msg}", ephemeral=True)
 
+    @discord.ui.button(label="📅 Schedule", style=ButtonStyle.green, row=4)
+    async def schedule_message_btn(self, interaction: discord.Interaction, button: Button):
+        from modules.scheduled_messages import ScheduledMessagesHubView
+        draft_payload = {
+            "content": self.session.global_text,
+            "embeds": [e.to_dict() for e in self.session.embeds]
+        }
+        hub_view = ScheduledMessagesHubView(interaction.client, self.parent_panel_view, draft_payload=draft_payload)
+        embed = await hub_view.build_hub_embed(interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=hub_view)
+
     @discord.ui.button(label="⬅ Back to Panel", style=ButtonStyle.blurple, row=4)
     async def back_to_panel(self, interaction: discord.Interaction, button: Button):
         # Re-render main control panel

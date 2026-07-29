@@ -87,6 +87,20 @@ class Database:
                 payload      TEXT NOT NULL,   -- JSON EmbedScript state
                 updated_at   TEXT DEFAULT (datetime('now'))
             );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_messages (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id       INTEGER NOT NULL,
+                user_id        INTEGER NOT NULL,
+                channel_ids    TEXT NOT NULL,   -- JSON list of channel IDs e.g. [123, 456]
+                payload        TEXT NOT NULL,   -- JSON EmbedScript state
+                scheduled_time TEXT NOT NULL,   -- ISO 8601 UTC timestamp e.g. '2026-07-30T10:15:00+00:00'
+                timezone_name  TEXT NOT NULL,   -- Timezone name e.g. 'US/Eastern'
+                status         TEXT DEFAULT 'pending', -- 'pending', 'sent', 'failed', 'cancelled'
+                created_at     TEXT DEFAULT (datetime('now')),
+                sent_at        TEXT DEFAULT NULL
+            );
             """
         ]
         for query in queries:

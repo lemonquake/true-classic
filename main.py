@@ -27,7 +27,8 @@ class TrueClassicBot(commands.Bot):
         extensions = [
             "modules.mod_panel",
             "modules.onboarding",
-            "modules.member_report"
+            "modules.member_report",
+            "modules.scheduled_messages"
         ]
         for ext in extensions:
             await self.load_extension(ext)
