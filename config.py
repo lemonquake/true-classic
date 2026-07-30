@@ -2,10 +2,17 @@
 True Classic Bot - Configuration Management
 Author: Aljay Leodones
 Organization: True Classic
+Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 """
 
 import os
 from dotenv import load_dotenv
+
+# Bot Metadata
+BOT_PREPARED_FOR = "True Classic"
+BOT_ORIGINALITY_NOTE = "The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc"
+
+# Load variables from .env file
 
 # Load variables from .env file
 load_dotenv()

@@ -1,6 +1,7 @@
 # True Classic Bot — Onboarding, Custom Reporting & Formatting Guide
 **Author:** Aljay Leodones  
 **Organization:** True Classic  
+**Details:** Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc  
 
 This document provides a comprehensive, detailed technical specification of how the **Onboarding System**, **Custom Reporting Engine**, and **Formatting / Embed Architecture** were built in the True Classic Discord Bot. It is structured so that any engineer or developer can duplicate or re-implement these systems easily.
 

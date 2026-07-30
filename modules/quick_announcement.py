@@ -2,6 +2,7 @@
 True Classic Bot - Quick Announcement Module
 Author: Aljay Leodones
 Organization: True Classic
+Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 
 Provides a streamlined, fast-navigation announcement creator with @everyone pinging,
 multi-channel targeting, default banner thumbnail, instant dispatching, and timezone-aware

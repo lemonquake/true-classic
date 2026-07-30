@@ -2,6 +2,7 @@
 True Classic Bot - Moderation Control Panel Module
 Author: Aljay Leodones
 Organization: True Classic
+Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 
 The control panel is fully persistent: every summoned panel message is recorded in
 the `mod_panels` table, re-attached to a live view on boot, and re-rendered with
@@ -420,6 +421,13 @@ class ModPanelView(discord.ui.View):
             ),
             inline=False
         )
+
+        embed.add_field(
+            name="⭐ Prepared for True Classic",
+            value="The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc.",
+            inline=False
+        )
+
         return embed
 
     # -- Rendering ---------------------------------------------------------
