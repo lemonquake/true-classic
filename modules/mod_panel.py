@@ -24,6 +24,7 @@ MODULE_EXTENSIONS = [
     "modules.member_report",
     "modules.scheduled_messages",
     "modules.summarizer",
+    "modules.quick_announcement",
 ]
 
 
@@ -407,6 +408,7 @@ class ModPanelView(discord.ui.View):
         embed.add_field(
             name="🛠️ Available Modules & Controls",
             value=(
+                "**Quick Announcement**: Rapidly post or schedule @everyone announcements across channels with banner imagery.\n"
                 "**Embed Editor**: Compose multi-embed broadcasts with dynamic hydrators.\n"
                 "**Member Onboarding**: Scan 30-day un-onboarded members & send deep-link DMs.\n"
                 "**Member Report**: Deploy self-updating daily/weekly/monthly growth reports.\n"
@@ -459,6 +461,15 @@ class ModPanelView(discord.ui.View):
 
     # -- Buttons -----------------------------------------------------------
 
+    @discord.ui.button(label="📢 Quick Announcement", style=discord.ButtonStyle.danger, row=0, custom_id="mod_panel:quick_announcement")
+    async def quick_announcement(self, interaction: discord.Interaction, button: discord.ui.Button):
+        print(f"[Mod Panel] {interaction.user} selected Quick Announcement")
+        from modules.quick_announcement import QuickAnnouncementHubView
+        hub_view = QuickAnnouncementHubView(self.bot, self)
+        summary_embed = hub_view.build_summary_embed(interaction.guild)
+        preview_embed = hub_view.state.build_announcement_embed()
+        await interaction.response.edit_message(embeds=[summary_embed, preview_embed], view=hub_view)
+
     @discord.ui.button(label="Embed Editor", style=discord.ButtonStyle.blurple, row=0, custom_id="mod_panel:embed_editor")
     async def embed_editor(self, interaction: discord.Interaction, button: discord.ui.Button):
         print(f"[Mod Panel] {interaction.user} selected Embed Editor")
@@ -499,7 +510,7 @@ class ModPanelView(discord.ui.View):
         embed = await hub_view.build_hub_embed(interaction.guild)
         await interaction.response.edit_message(embed=embed, view=hub_view)
 
-    @discord.ui.button(label="🧠 Summarizer", style=discord.ButtonStyle.blurple, row=0, custom_id="mod_panel:summarizer")
+    @discord.ui.button(label="🧠 Summarizer", style=discord.ButtonStyle.blurple, row=1, custom_id="mod_panel:summarizer")
     async def summarizer(self, interaction: discord.Interaction, button: discord.ui.Button):
         print(f"[Mod Panel] {interaction.user} selected Summarizer")
         from modules.summarizer import SummarizerHubView
