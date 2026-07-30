@@ -5,7 +5,12 @@ Organization: True Classic
 
 Mod Panel -> Summarizer -> pick group (Inner Circle / Academy) -> pick window
 (Today / 7 Days / 1 Month) -> the bot scans every creator channel in that group and
-publishes a triage report + full .txt breakdown to the reports channel.
+publishes a triage report to the reports channel with two .txt deliverables:
+
+  1. SUMMARY REPORT -- operational triage: who is waiting, what to do next.
+  2. CREATOR CARE BRIEF -- one care card per creator for customer-care work:
+     their most common topics, repeat asks, missed messages, issues, the promises
+     we made them, personal context, wins, our response speed, and a draft opener.
 """
 
 import datetime
@@ -21,6 +26,7 @@ import config
 from utils import embed_builder
 from core import inner_groups
 from core import summarizer_engine as engine
+from core import care_engine as care
 
 
 class SecuredView(View):
@@ -79,7 +85,9 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
         title=f"{group['emoji']} {group['label']} • Summary Report • {tf['label']}",
         description=(
             f"Scanned **{t['channels']}** creator channel(s) over **{tf['long'].lower()}**.\n"
-            f"Full per-channel breakdown is in the attached text file."
+            f"📄 **Summary report** — triage, worksheet, conversation trails.\n"
+            f"🧡 **Creator Care Brief** — one care card per creator for personalised replies.\n"
+            f"*Both files are attached below.*"
         ),
         color=color
     )
@@ -170,19 +178,125 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
             inline=False
         )
 
+    _add_care_fields(embed, scan)
+
     embed.set_footer(
         text=(
             f"Requested by {requester.display_name} • {now.strftime('%Y-%m-%d %H:%M UTC')} • "
-            "Open the .txt for conversation trails and per-channel next steps"
+            "Summary .txt = what to do • Care Brief .txt = what to say"
         )
     )
     return embed
+
+
+def _add_care_fields(embed: discord.Embed, scan: dict) -> None:
+    """Surface the headline customer-care signals directly in the channel post."""
+    c = care.build_group_care(scan)
+    live = c["live"]
+    if not live:
+        return
+
+    mood_bits = []
+    for key in ["frustrated", "cooling", "neutral", "warm", "positive", "nosignal"]:
+        cnt = c["moods"].get(key, 0)
+        if cnt:
+            mood_bits.append(f"{care.MOODS[key]['emoji']} {cnt}")
+    speed = (
+        f"typical first reply **{care.humanize(c['reply_median_group'])}**"
+        if c["reply_median_group"] is not None else "no reply measured in this window"
+    )
+    embed.add_field(
+        name="🧡 Care Pulse",
+        value=(
+            f"**Mood:** {'  '.join(mood_bits)}\n"
+            f"**Our speed:** {speed}\n"
+            f"**At risk:** {len(c['at_risk'])} • **Going cold:** {len(c['cold'])} • "
+            f"**Promises owed:** {len(c['promises'])}"
+        ),
+        inline=False
+    )
+
+    top_cards = [p for p in c["profiles"] if p["care_score"] > 0][:5]
+    if top_cards:
+        lines = []
+        for i, p in enumerate(top_cards, start=1):
+            m = care.MOODS[p["mood"]]
+            lines.append(f"`{i}.` {m['emoji']} <#{p['channel_id']}> — {p['headline']}")
+        embed.add_field(
+            name="🎯 Care Queue (read their card before replying)",
+            value=_truncate_field(lines),
+            inline=False
+        )
+
+    if c["recurring"]:
+        lines = [
+            f"{v['emoji']} **{name}** — asked by {len(v['creators'])} creator(s), {v['asks']} question(s)"
+            for name, v in c["recurring"][:5]
+        ]
+        embed.add_field(
+            name="🔁 Asked By Multiple Creators (answer once, publicly)",
+            value=_truncate_field(lines),
+            inline=False
+        )
+
+    highlight_lines = []
+    if c["wins"]:
+        highlight_lines.append(
+            f"🏆 **{len(c['wins'])}** creator(s) shared a win worth thanking them for"
+        )
+    if c["personal"]:
+        highlight_lines.append(
+            f"🧍 **{len(c['personal'])}** shared personal context — open with it, not with business"
+        )
+    if c["promises"]:
+        highlight_lines.append(
+            f"🤝 **{len(c['promises'])}** are waiting on something we said we'd do"
+        )
+    if highlight_lines:
+        embed.add_field(name="✨ Personalisation Hooks", value="\n".join(highlight_lines), inline=False)
 
 
 def build_report_file(scan: dict, requester: discord.abc.User) -> discord.File:
     text = engine.build_report_text(scan, f"{requester.display_name} ({requester.id})")
     buf = io.BytesIO(text.encode("utf-8"))
     return discord.File(buf, filename=engine.report_filename(scan))
+
+
+def build_care_file(scan: dict, requester: discord.abc.User) -> discord.File:
+    text = care.build_care_report_text(scan, f"{requester.display_name} ({requester.id})")
+    buf = io.BytesIO(text.encode("utf-8"))
+    return discord.File(buf, filename=care.care_filename(scan))
+
+
+def build_scan_files(scan: dict, requester: discord.abc.User) -> List[discord.File]:
+    """Both deliverables. Built fresh per send -- a discord.File is single-use."""
+    return [build_report_file(scan, requester), build_care_file(scan, requester)]
+
+
+def build_care_embed(scan: dict, requester: discord.abc.User) -> discord.Embed:
+    """Standalone digest for the Care Brief when it is generated on its own."""
+    c = care.build_group_care(scan)
+    group = scan["group"]
+    tf = engine.TIMEFRAMES[scan["timeframe"]]
+
+    embed = embed_builder.base_embed(
+        title=f"🧡 {group['label']} • Creator Care Brief • {tf['label']}",
+        description=(
+            f"One care card per creator across **{len(c['profiles'])}** channel(s).\n"
+            "Each card carries their most common topics, repeat asks, the messages we missed, "
+            "issues in their own words, promises we made, personal context, wins, our response "
+            "speed, when they're online, and a draft opener."
+        ),
+        color=embed_builder.COLOR_BRAND
+    )
+    _add_care_fields(embed, scan)
+    embed.set_footer(
+        text=(
+            f"Requested by {requester.display_name} • "
+            f"{scan['now'].strftime('%Y-%m-%d %H:%M UTC')} • Read the card before you type"
+        )
+    )
+    return embed
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +376,15 @@ class SummarizerHubView(SecuredView):
         preview_btn.callback = self.run_preview
         self.add_item(preview_btn)
 
+        care_btn = Button(
+            label="🧡 Care Brief Only (only me)",
+            style=ButtonStyle.blurple,
+            disabled=not ready,
+            row=3,
+        )
+        care_btn.callback = self.run_care_only
+        self.add_item(care_btn)
+
         history_btn = Button(label="🧾 Run History", style=ButtonStyle.grey, row=3)
         history_btn.callback = self.show_history
         self.add_item(history_btn)
@@ -277,8 +400,9 @@ class SummarizerHubView(SecuredView):
         embed = embed_builder.base_embed(
             title="🧠 Inner Group Summarizer",
             description=(
-                "Scans every creator channel in a group, works out **who is waiting on us**, "
-                "and posts a triage report plus a full `.txt` breakdown with next steps for each channel."
+                "Scans every creator channel in a group and posts a triage digest with **two** "
+                "text deliverables: a **Summary Report** (what to do) and a **Creator Care Brief** "
+                "(what to say, creator by creator)."
             ),
             color=embed_builder.COLOR_BRAND
         )
@@ -316,13 +440,29 @@ class SummarizerHubView(SecuredView):
         )
 
         embed.add_field(
-            name="📋 What The Report Gives You",
+            name="📄 File 1 — Summary Report (operations)",
             value=(
                 "▸ **Triage board** — every channel ranked, longest wait first\n"
                 "▸ **Mod worksheet** — a `[ ]` checklist you can paste into your notes\n"
                 "▸ **Per channel** — topics discussed, quoted unanswered questions, "
                 "conversation trail, and numbered next steps\n"
                 "▸ **New since last report** — what moved since the previous run"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🧡 File 2 — Creator Care Brief (customer care)",
+            value=(
+                "One **care card per creator** so a reply never reads copy-pasted:\n"
+                "▸ **Mood + volume tier** and a one-line *read this first*\n"
+                "▸ **Most common topics** and what they've asked **more than once**\n"
+                "▸ **Messages we missed** and **open questions**, quoted verbatim\n"
+                "▸ **Issues in their own words** and **promises we made them**\n"
+                "▸ **Personal context** and **wins** to open with\n"
+                "▸ **Our reply speed to them**, their **active hours**, how they write\n"
+                "▸ **Draft opener** with `{{placeholders}}` you fill in\n"
+                "▸ Group-level: **care queue**, **recurring asks** to answer once, watchlist"
             ),
             inline=False
         )
@@ -434,10 +574,10 @@ class SummarizerHubView(SecuredView):
                 return
 
             embed = build_summary_embed(scan, interaction.user)
-            file = build_report_file(scan, interaction.user)
+            files = build_scan_files(scan, interaction.user)
 
             try:
-                posted = await report_channel.send(embed=embed, file=file)
+                posted = await report_channel.send(embed=embed, files=files)
             except discord.Forbidden:
                 await interaction.followup.send(
                     embed=embed_builder.error_embed(
@@ -451,13 +591,17 @@ class SummarizerHubView(SecuredView):
             await self._record_run(interaction, scan, report_channel.id, posted.id)
 
             t = scan["totals"]
+            c = care.build_group_care(scan)
             await interaction.followup.send(
                 embed=embed_builder.success_embed(
                     "Report Published",
                     f"Posted to {report_channel.mention} → [jump to report]({posted.jump_url})\n\n"
                     f"🔴 **{t['buckets']['P1']}** need a reply now • "
                     f"🟠 **{t['buckets']['P2']}** need a follow-up • "
-                    f"⚪ **{t['buckets']['P5']}** silent"
+                    f"⚪ **{t['buckets']['P5']}** silent\n"
+                    f"🧡 Care Brief: **{len(c['at_risk'])}** at risk • "
+                    f"**{len(c['promises'])}** promise(s) owed • "
+                    f"**{len(c['recurring'])}** recurring ask(s)"
                 ),
                 ephemeral=True
             )
@@ -479,7 +623,27 @@ class SummarizerHubView(SecuredView):
             await interaction.followup.send(
                 content="**Preview only — this was not posted to the reports channel.**",
                 embed=build_summary_embed(scan, interaction.user),
-                file=build_report_file(scan, interaction.user),
+                files=build_scan_files(scan, interaction.user),
+                ephemeral=True
+            )
+        finally:
+            self.running = False
+
+    async def run_care_only(self, interaction: discord.Interaction):
+        """Care Brief on its own — for a mod about to sit down and answer creators."""
+        if self.running:
+            await interaction.response.send_message("A scan is already running — hold on.", ephemeral=True)
+            return
+        self.running = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            scan = await self._run_scan(interaction)
+            if scan is None:
+                return
+            await interaction.followup.send(
+                content="**Creator Care Brief — only you can see this. Nothing was posted.**",
+                embed=build_care_embed(scan, interaction.user),
+                file=build_care_file(scan, interaction.user),
                 ephemeral=True
             )
         finally:

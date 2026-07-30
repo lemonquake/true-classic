@@ -262,6 +262,7 @@ async def analyze_channel(
         "topics":         [],
         "open_questions": [],
         "trail":          [],
+        "records":        [],   # lightweight per-message rows -- consumed by core/care_engine.py
         "counts":         {"total": 0, "creator": 0, "staff": 0, "bot": 0},
         "new_since_last": 0,
         "attachments":    0,
@@ -385,6 +386,18 @@ async def analyze_channel(
             creator_blobs.append(body)
             result["attachments"] += len(msg.attachments)
             result["links"] += len(URL_PATTERN.findall(body))
+
+        # Keep a flat record of the window so the Care engine can profile the
+        # relationship (tone, rhythm, promises, repeat asks) without re-fetching.
+        result["records"].append({
+            "id":          msg.id,
+            "ts":          msg.created_at.astimezone(datetime.timezone.utc),
+            "cls":         cls,
+            "author":      msg.author.display_name,
+            "content":     body,
+            "attachments": len(msg.attachments),
+            "reactions":   sum(r.count for r in msg.reactions),
+        })
 
     result["topics"] = _detect_topics(human_blobs)
 
