@@ -357,6 +357,13 @@ class AnnouncementScheduleTimezoneView(SecuredView):
         await self.hub_view.update_hub(interaction)
 
 
+def _get_timezone_obj(iana_tz: str) -> datetime.tzinfo:
+    try:
+        return zoneinfo.ZoneInfo(iana_tz)
+    except Exception:
+        return datetime.timezone.utc
+
+
 class AnnouncementTimePickerModal(Modal, title="Schedule Time (5-Min Step Interval)"):
     def __init__(self, bot, state: QuickAnnouncementState, hub_view: QuickAnnouncementHubView, tz_label: str, iana_tz: str):
         super().__init__()
@@ -366,7 +373,8 @@ class AnnouncementTimePickerModal(Modal, title="Schedule Time (5-Min Step Interv
         self.tz_label = tz_label
         self.iana_tz = iana_tz
 
-        now_tz = datetime.datetime.now(zoneinfo.ZoneInfo(iana_tz))
+        tz_obj = _get_timezone_obj(iana_tz)
+        now_tz = datetime.datetime.now(tz_obj)
         # Round up to next 5 minutes
         rem = 5 - (now_tz.minute % 5)
         default_dt = now_tz + datetime.timedelta(minutes=rem)
@@ -412,7 +420,7 @@ class AnnouncementTimePickerModal(Modal, title="Schedule Time (5-Min Step Interv
 
         try:
             dt_naive = datetime.datetime.strptime(f"{date_str} {hour_str}:{min_str}", "%Y-%m-%d %H:%M")
-            tz_obj = zoneinfo.ZoneInfo(self.iana_tz)
+            tz_obj = _get_timezone_obj(self.iana_tz)
             dt_local = dt_naive.replace(tzinfo=tz_obj)
             dt_utc = dt_local.astimezone(datetime.timezone.utc)
         except Exception as e:
