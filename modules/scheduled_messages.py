@@ -264,7 +264,7 @@ class ScheduleWizardView(SecuredView):
         self.add_item(c_select)
 
     async def channel_cb(self, interaction: discord.Interaction):
-        self.selected_channels = [c.id for c in interaction.data["resolved"]["channels"].values()]
+        self.selected_channels = [int(val) for val in interaction.data["values"]]
         
         # Move to Step 2: Select Timezone
         tz_view = ScheduleTimezoneView(self.bot, self.hub_view, self.selected_channels, self.draft_payload)

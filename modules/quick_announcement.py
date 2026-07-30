@@ -172,7 +172,7 @@ class QuickAnnouncementHubView(SecuredView):
         self.add_item(c_select)
 
     async def channel_select_cb(self, interaction: discord.Interaction):
-        self.state.target_channel_ids = [c.id for c in interaction.data["resolved"]["channels"].values()]
+        self.state.target_channel_ids = [int(val) for val in interaction.data["values"]]
         await self.update_hub(interaction)
 
     def build_summary_embed(self, guild: Optional[discord.Guild]) -> discord.Embed:
