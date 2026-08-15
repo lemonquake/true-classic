@@ -57,14 +57,45 @@ class EmbedState:
         new_state.fields = [f.copy() for f in self.fields]
         return new_state
 
+    def is_empty(self):
+        # An untouched state carries nothing Discord would render
+        return not (
+            self.title or self.description or self.author_name or
+            self.image_url or self.thumbnail_url or self.footer_text or self.fields
+        )
+
+    @classmethod
+    def from_discord_embed(cls, embed: discord.Embed):
+        # Rebuild an editable state out of an embed that is already live on a message
+        state = cls()
+        state.title = embed.title or None
+        state.description = embed.description or None
+        state.url = embed.url or None
+        state.color = embed.color.value if embed.color else 0x3498db
+
+        if embed.author:
+            state.author_name = embed.author.name or None
+            state.author_icon = embed.author.icon_url or None
+            state.author_url = embed.author.url or None
+        if embed.image:
+            state.image_url = embed.image.url or None
+        if embed.thumbnail:
+            state.thumbnail_url = embed.thumbnail.url or None
+        if embed.footer:
+            state.footer_text = embed.footer.text or None
+            state.footer_icon = embed.footer.icon_url or None
+
+        state.fields = [
+            {"name": f.name, "value": f.value, "inline": bool(f.inline)}
+            for f in embed.fields
+        ]
+        return state
+
     def to_discord_embed(self):
         # We need at least one field to render an embed in discord
         # If completely empty, return a placeholder so it doesn't crash
-        is_empty = not (
-            self.title or self.description or self.author_name or 
-            self.image_url or self.thumbnail_url or self.footer_text or self.fields
-        )
-        
+        is_empty = self.is_empty()
+
         embed = discord.Embed(
             title=self.title if self.title else (None if not is_empty else "New Embed"),
             description=self.description if self.description else (None if not is_empty else "Use edit buttons below to set content."),
@@ -539,10 +570,11 @@ class EditEmbedView(SecuredView):
 
     @discord.ui.button(label="⬅ Back to Hub", style=ButtonStyle.blurple, row=3)
     async def back_to_hub(self, interaction: discord.Interaction, button: Button):
-        # Regenerate the hub view to match updated session state
-        new_hub_view = EmbedEditorHubView(self.session, self.hub_view.parent_panel_view)
+        # Regenerate the hub view to match updated session state. rebuild() is asked of
+        # the hub itself so alternate hubs (e.g. the Message Editor) come back correctly.
+        new_hub_view = self.hub_view.rebuild()
         await interaction.response.edit_message(
-            embed=new_hub_view.get_hub_embed(),
+            embeds=new_hub_view.get_hub_embeds(),
             view=new_hub_view
         )
 
@@ -624,6 +656,12 @@ class EmbedEditorHubView(SecuredView):
         embed.add_field(name="Embeds List", value="\n".join(embeds_summary), inline=False)
         
         return embed
+
+    def get_hub_embeds(self):
+        return [self.get_hub_embed()]
+
+    def rebuild(self):
+        return EmbedEditorHubView(self.session, self.parent_panel_view)
 
     async def refresh_hub(self, interaction: discord.Interaction, defer=True):
         # Recreate dynamic buttons for row 0 and 1

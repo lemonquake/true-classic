@@ -5,12 +5,22 @@ Organization: True Classic
 Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 """
 
+import sys
 import math
 import datetime
 import discord
 from discord.ext import commands
 import config
 from database import Database
+
+# Windows consoles default to cp1252, which raises UnicodeEncodeError the moment a log
+# line carries an emoji (channel names, display names, panel labels) and kills whatever
+# was running. Force UTF-8 so logging can never take a feature down with it.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
 
 class TrueClassicBot(commands.Bot):
     def __init__(self):
@@ -34,7 +44,8 @@ class TrueClassicBot(commands.Bot):
             "modules.onboarding",
             "modules.member_report",
             "modules.scheduled_messages",
-            "modules.summarizer"
+            "modules.summarizer",
+            "modules.message_editor"
         ]
         for ext in extensions:
             await self.load_extension(ext)

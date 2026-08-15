@@ -1,14 +1,15 @@
 """
-True Classic Bot - Inner Group Summarizer Engine
+True Classic Bot - Community Summarizer Engine
 Author: Aljay Leodones
 Organization: True Classic
 Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 
-Scans Inner Circle / Academy DM channels and produces a mod-ready triage report.
+Reads the shared community channel and produces a mod-ready triage report -- one entry
+per creator who posted, built from their own slice of the conversation.
 
 Everything here is deterministic (no external AI service): topics are detected with a
 curated keyword taxonomy tuned to the True Classic creator program, and reply state is
-derived from who actually spoke last in the channel. That means the same window always
+derived from who actually spoke last to that creator. That means the same window always
 produces the same report, and mods can trust the numbers.
 """
 
@@ -27,25 +28,30 @@ import config
 
 TIMEFRAMES = {
     "today": {
-        "key":       "today",
-        "label":     "Today",
-        "long":      "Today (since 00:00 UTC)",
-        "emoji":     "🕐",
-        "fetch_cap": 300,
+        "key":        "today",
+        "label":      "Today",
+        "long":       "Today (since 00:00 UTC)",
+        "emoji":      "🕐",
+        "fetch_cap":  300,
+        # One busy public channel carries the traffic of the whole roster, so the
+        # shared-channel scan needs a much bigger ceiling than a single DM channel.
+        "shared_cap": 1000,
     },
     "7d": {
-        "key":       "7d",
-        "label":     "7 Days",
-        "long":      "Last 7 Days",
-        "emoji":     "📆",
-        "fetch_cap": 600,
+        "key":        "7d",
+        "label":      "7 Days",
+        "long":       "Last 7 Days",
+        "emoji":      "📆",
+        "fetch_cap":  600,
+        "shared_cap": 4000,
     },
     "30d": {
-        "key":       "30d",
-        "label":     "1 Month",
-        "long":      "Last 30 Days",
-        "emoji":     "🗓️",
-        "fetch_cap": 1200,
+        "key":        "30d",
+        "label":      "1 Month",
+        "long":       "Last 30 Days",
+        "emoji":      "🗓️",
+        "fetch_cap":  1200,
+        "shared_cap": 8000,
     },
 }
 
@@ -159,6 +165,10 @@ BUCKETS = {
 
 BUCKET_ORDER = ["P1", "P2", "P3", "P4", "P5", "XX"]
 
+# A creator we have seen before still gets a "went quiet" card after they stop
+# posting -- but not forever, or every past member piles up in the report.
+SILENT_CARD_MAX_DAYS = 90
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -236,26 +246,27 @@ def _detect_urgency(blobs: List[str]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Per-channel analysis
+# Per-subject analysis
+#
+# A "subject" is whatever a card is about: a DM channel in roster mode, or a
+# single creator inside the shared community channel. Both produce the same
+# result shape, so every report, embed and care card downstream is unchanged.
 # ---------------------------------------------------------------------------
 
-async def analyze_channel(
-    bot,
-    guild: discord.Guild,
+def _new_result(
     creator_name: str,
     channel_id: int,
-    timeframe: str,
-    now: datetime.datetime,
+    channel_name: str,
     prev_state: Optional[dict] = None,
 ) -> dict:
-    """Scan one channel and return a structured analysis dict."""
-    tf = TIMEFRAMES[timeframe]
-    since = window_start(timeframe, now)
-
-    result = {
+    """Empty analysis record. `label` / `mention` are how the subject is named."""
+    return {
         "creator":        creator_name,
+        "user_id":        None,
         "channel_id":     channel_id,
-        "channel_name":   f"channel-{channel_id}",
+        "channel_name":   channel_name,
+        "label":          f"#{channel_name}",
+        "mention":        f"<#{channel_id}>",
         "bucket":         "P4",
         "reasons":        [],
         "next_steps":     [],
@@ -274,12 +285,15 @@ async def analyze_channel(
         "unreplied":      0,
         "reaction_ack":   False,
         "waiting_hours":  None,
+        "jump_url":       None,   # the message a mod should open first
         "error":          None,
         "last_message_id": prev_state.get("last_message_id") if prev_state else None,
         "last_message_at": prev_state.get("last_message_at") if prev_state else None,
     }
 
-    # --- resolve channel -----------------------------------------------------
+
+async def _resolve_channel(guild: discord.Guild, channel_id: int, result: dict):
+    """Resolve a channel id, marking the result unreadable if we cannot see it."""
     channel = guild.get_channel(channel_id)
     if channel is None:
         try:
@@ -290,11 +304,33 @@ async def analyze_channel(
             result["reasons"].append(result["error"])
             result["next_steps"].append(
                 "Verify the channel still exists and the bot has View Channel + Read Message History, "
-                "then update core/inner_groups.py if the ID changed."
+                "then update the channel id in core/inner_groups.py if it moved."
             )
-            return result
-
+            return None
     result["channel_name"] = getattr(channel, "name", result["channel_name"])
+    result["label"] = f"#{result['channel_name']}"
+    return channel
+
+
+async def analyze_channel(
+    bot,
+    guild: discord.Guild,
+    creator_name: str,
+    channel_id: int,
+    timeframe: str,
+    now: datetime.datetime,
+    prev_state: Optional[dict] = None,
+) -> dict:
+    """Scan one dedicated creator channel and return a structured analysis dict."""
+    tf = TIMEFRAMES[timeframe]
+    since = window_start(timeframe, now)
+
+    result = _new_result(creator_name, channel_id, f"channel-{channel_id}", prev_state)
+
+    # --- resolve channel -----------------------------------------------------
+    channel = await _resolve_channel(guild, channel_id, result)
+    if channel is None:
+        return result
 
     # --- fetch history -------------------------------------------------------
     messages: List[discord.Message] = []
@@ -329,6 +365,7 @@ async def analyze_channel(
     if latest_overall is not None:
         result["last_message_id"] = latest_overall.id
         result["last_message_at"] = latest_overall.created_at.astimezone(datetime.timezone.utc).isoformat()
+        result["jump_url"] = getattr(latest_overall, "jump_url", None)
 
     # --- empty window --------------------------------------------------------
     if not messages:
@@ -360,8 +397,24 @@ async def analyze_channel(
                 )
         return result
 
-    # --- tally ---------------------------------------------------------------
     classes = [_classify_author(m.author, guild) for m in messages]
+    _analyze_stream(result, messages, classes, now, prev_state)
+    return result
+
+
+def _analyze_stream(
+    result: dict,
+    messages: List[discord.Message],
+    classes: List[str],
+    now: datetime.datetime,
+    prev_state: Optional[dict] = None,
+) -> dict:
+    """Score one ordered conversation stream: tally, trail, reply state, buckets.
+
+    `messages` / `classes` are one creator's conversation -- a whole DM channel in
+    roster mode, or the slice of the shared channel that belongs to them.
+    """
+    # --- tally ---------------------------------------------------------------
     for cls in classes:
         result["counts"][cls] += 1
     result["counts"]["total"] = len(messages)
@@ -394,6 +447,7 @@ async def analyze_channel(
             "id":          msg.id,
             "ts":          msg.created_at.astimezone(datetime.timezone.utc),
             "cls":         cls,
+            "jump":        getattr(msg, "jump_url", None),
             "author":      msg.author.display_name,
             "content":     body,
             "attachments": len(msg.attachments),
@@ -460,6 +514,15 @@ async def analyze_channel(
             dt = messages[i].created_at.astimezone(datetime.timezone.utc)
             result["open_questions"].append((dt.strftime("%Y-%m-%d %H:%M"), _one_line(body, 220)))
     result["open_questions"] = result["open_questions"][:6]
+
+    # Where a mod should land when they click through: the oldest message still
+    # waiting on us, or failing that the last thing the creator said.
+    if unreplied_idx:
+        result["jump_url"] = getattr(messages[unreplied_idx[0]], "jump_url", None)
+    elif last_creator_idx >= 0:
+        result["jump_url"] = getattr(messages[last_creator_idx], "jump_url", None)
+    else:
+        result["jump_url"] = getattr(messages[-1], "jump_url", None)
 
     creator_waiting = result["unreplied"] > 0
     if creator_waiting:
@@ -592,7 +655,301 @@ async def scan_group(
     timeframe: str,
     progress_cb=None,
 ) -> dict:
-    """Scan every channel in a group. Returns a full scan payload."""
+    """Scan a group and return a full scan payload.
+
+    Dispatches on the group's mode: one shared public channel split per creator,
+    or a roster of dedicated per-creator channels.
+    """
+    if group.get("mode") == "shared_channel":
+        return await scan_shared_channel(bot, guild, group, timeframe, progress_cb)
+    return await scan_channel_roster(bot, guild, group, timeframe, progress_cb)
+
+
+async def _prev_run(bot, guild: discord.Guild, group: dict):
+    row = await bot.database.fetchone(
+        """
+        SELECT * FROM summarizer_runs
+        WHERE guild_id = ? AND group_key = ?
+        ORDER BY id DESC LIMIT 1
+        """,
+        (guild.id, group["key"]),
+    )
+    return dict(row) if row else None
+
+
+# --- shared public channel, one card per creator ---------------------------
+
+def _reply_targets(msg: discord.Message, by_id: Dict[int, discord.Message]) -> List[int]:
+    """Who a staff/bot message is aimed at: who it replied to, then who it mentions."""
+    targets: List[int] = []
+
+    ref = msg.reference
+    if ref is not None:
+        parent = None
+        if ref.message_id and ref.message_id in by_id:
+            parent = by_id[ref.message_id]
+        elif isinstance(getattr(ref, "resolved", None), discord.Message):
+            parent = ref.resolved
+        if parent is not None:
+            targets.append(parent.author.id)
+
+    for user in msg.mentions:
+        if user.id not in targets:
+            targets.append(user.id)
+    return targets
+
+
+def _split_by_creator(
+    messages: List[discord.Message],
+    classes: List[str],
+) -> Dict[int, dict]:
+    """Turn one shared channel into one conversation stream per creator.
+
+    A creator's stream is everything they said, plus the staff/bot messages aimed
+    at them: an explicit reply, an @mention, or -- for staff only -- an untargeted
+    message right after they spoke, which is how a mod answering the last person
+    in the room actually looks.
+    """
+    by_id = {m.id: m for m in messages}
+    streams: Dict[int, dict] = {}
+    last_creator_id: Optional[int] = None
+
+    for msg, cls in zip(messages, classes):
+        if cls == "creator":
+            uid = msg.author.id
+            stream = streams.setdefault(uid, {"author": msg.author, "messages": [], "classes": []})
+            stream["author"] = msg.author
+            stream["messages"].append(msg)
+            stream["classes"].append(cls)
+            last_creator_id = uid
+            continue
+
+        targets = _reply_targets(msg, by_id)
+        if not targets and cls == "staff" and last_creator_id is not None:
+            targets = [last_creator_id]
+        for uid in targets:
+            stream = streams.get(uid)
+            if stream is None:
+                # Only creators who have actually spoken in this window get a card;
+                # a mention alone is not a conversation.
+                continue
+            stream["messages"].append(msg)
+            stream["classes"].append(cls)
+
+    return streams
+
+
+def _message_link(guild_id: int, channel_id: int, message_id: Optional[int]) -> Optional[str]:
+    if not message_id:
+        return None
+    return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+
+
+def _silent_creator_result(
+    row: dict,
+    guild_id: int,
+    channel_id: int,
+    channel_name: str,
+    now: datetime.datetime,
+) -> Optional[dict]:
+    """Card for a creator we have seen before who said nothing in this window.
+
+    Returns None once they are past SILENT_CARD_MAX_DAYS -- at that point they are
+    not "going quiet" any more, they have left, and the row stays in the database
+    so they keep their history if they ever come back.
+    """
+    last_at = None
+    if row.get("last_message_at"):
+        try:
+            last_at = datetime.datetime.fromisoformat(row["last_message_at"])
+        except Exception:
+            last_at = None
+    if last_at and (now - last_at).days > SILENT_CARD_MAX_DAYS:
+        return None
+
+    name = row.get("author_name") or f"user-{row['author_id']}"
+    result = _new_result(name, channel_id, channel_name, row)
+    result["user_id"] = row["author_id"]
+    result["label"] = f"@{name}"
+    result["mention"] = f"<@{row['author_id']}>"
+    result["bucket"] = "P5"
+    result["jump_url"] = _message_link(guild_id, channel_id, row.get("last_message_id"))
+
+    gap = _humanize_delta(now - last_at) if last_at else None
+    if gap:
+        result["reasons"].append(f"said nothing in this window (last posted {gap} ago)")
+        result["next_steps"].append(
+            f"No post from them in {gap}. Send a check-in; if there is still nothing, "
+            "flag them for a re-engagement or offboarding decision."
+        )
+    else:
+        result["reasons"].append("said nothing in this window")
+        result["next_steps"].append("Check whether they are still active in the program.")
+    return result
+
+
+async def scan_shared_channel(
+    bot,
+    guild: discord.Guild,
+    group: dict,
+    timeframe: str,
+    progress_cb=None,
+) -> dict:
+    """Read one public channel and build a card per creator who posted in it."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    since = window_start(timeframe, now)
+    tf = TIMEFRAMES[timeframe]
+    channel_id = group["channel_id"]
+
+    prev_rows = await bot.database.fetchall(
+        "SELECT * FROM summarizer_author_state WHERE guild_id = ? AND channel_id = ?",
+        (guild.id, channel_id),
+    )
+    prev_authors = {row["author_id"]: dict(row) for row in prev_rows}
+
+    probe = _new_result(group["label"], channel_id, f"channel-{channel_id}")
+    channel = await _resolve_channel(guild, channel_id, probe)
+    if channel is None:
+        return {
+            "group":        group,
+            "timeframe":    timeframe,
+            "now":          now,
+            "since":        since,
+            "results":      [probe],
+            "channel_name": probe["channel_name"],
+            "prev_run":     await _prev_run(bot, guild, group),
+            "totals":       _totals([probe]),
+        }
+
+    channel_name = probe["channel_name"]
+
+    # --- read the channel once ----------------------------------------------
+    messages: List[discord.Message] = []
+    try:
+        async for msg in channel.history(limit=tf["shared_cap"], after=since, oldest_first=True):
+            messages.append(msg)
+            if progress_cb and len(messages) % 250 == 0:
+                try:
+                    await progress_cb(0, 0, f"read {len(messages)} messages")
+                except Exception:
+                    pass
+    except discord.Forbidden:
+        probe["bucket"] = "XX"
+        probe["error"] = "missing Read Message History permission"
+        probe["reasons"].append(probe["error"])
+        probe["next_steps"].append(
+            f"Grant the bot **View Channel** and **Read Message History** in #{channel_name}."
+        )
+    except Exception as exc:
+        probe["bucket"] = "XX"
+        probe["error"] = f"history fetch failed ({type(exc).__name__}: {exc})"
+        probe["reasons"].append(probe["error"])
+        probe["next_steps"].append("Re-run the Summarizer; if it repeats, check bot permissions.")
+
+    if probe["bucket"] == "XX":
+        return {
+            "group":        group,
+            "timeframe":    timeframe,
+            "now":          now,
+            "since":        since,
+            "results":      [probe],
+            "channel_name": probe["channel_name"],
+            "prev_run":     await _prev_run(bot, guild, group),
+            "totals":       _totals([probe]),
+        }
+
+    classes = [_classify_author(m.author, guild) for m in messages]
+    streams = _split_by_creator(messages, classes)
+
+    # --- one result per creator ---------------------------------------------
+    results: List[dict] = []
+    total = len(streams)
+    for idx, (uid, stream) in enumerate(streams.items(), start=1):
+        author = stream["author"]
+        name = getattr(author, "display_name", None) or str(author)
+        result = _new_result(name, channel_id, channel_name, prev_authors.get(uid))
+        result["user_id"] = uid
+        result["label"] = f"@{name}"
+        result["mention"] = f"<@{uid}>"
+
+        own = [m for m, c in zip(stream["messages"], stream["classes"]) if c == "creator"]
+        if own:
+            newest = own[-1]
+            result["last_message_id"] = newest.id
+            result["last_message_at"] = newest.created_at.astimezone(datetime.timezone.utc).isoformat()
+
+        _analyze_stream(result, stream["messages"], stream["classes"], now, prev_authors.get(uid))
+        results.append(result)
+
+        if progress_cb and (idx % 5 == 0 or idx == total):
+            try:
+                await progress_cb(idx, total, name)
+            except Exception:
+                pass
+
+    # Creators we have profiled before who stayed silent this window still get a
+    # card -- going quiet is exactly the thing the care report exists to catch.
+    for uid, row in prev_authors.items():
+        if uid in streams:
+            continue
+        silent = _silent_creator_result(row, guild.id, channel_id, channel_name, now)
+        if silent is not None:
+            results.append(silent)
+
+    # --- remember who we saw -------------------------------------------------
+    for r in results:
+        if not r.get("user_id"):
+            continue
+        await bot.database.execute(
+            """
+            INSERT INTO summarizer_author_state
+                (guild_id, channel_id, author_id, group_key, author_name,
+                 last_message_id, last_message_at, last_status, last_reported_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(guild_id, channel_id, author_id) DO UPDATE SET
+                group_key        = excluded.group_key,
+                author_name      = COALESCE(excluded.author_name, summarizer_author_state.author_name),
+                last_message_id  = COALESCE(excluded.last_message_id, summarizer_author_state.last_message_id),
+                last_message_at  = COALESCE(excluded.last_message_at, summarizer_author_state.last_message_at),
+                last_status      = excluded.last_status,
+                last_reported_at = datetime('now')
+            """,
+            (
+                guild.id, channel_id, r["user_id"], group["key"], r["creator"],
+                r["last_message_id"], r["last_message_at"], r["bucket"],
+            ),
+        )
+
+    totals = _totals(results)
+    # Per-creator streams overlap (one staff post can answer one creator) and skip
+    # untargeted chatter, so channel volume is counted from the raw fetch instead.
+    totals["messages"] = len(messages)
+    totals["creator_msgs"] = classes.count("creator")
+    totals["staff_msgs"] = classes.count("staff")
+    totals["bot_msgs"] = classes.count("bot")
+
+    return {
+        "group":        group,
+        "timeframe":    timeframe,
+        "now":          now,
+        "since":        since,
+        "results":      results,
+        "channel_name": channel_name,
+        "prev_run":     await _prev_run(bot, guild, group),
+        "totals":       totals,
+    }
+
+
+# --- roster of dedicated per-creator channels ------------------------------
+
+async def scan_channel_roster(
+    bot,
+    guild: discord.Guild,
+    group: dict,
+    timeframe: str,
+    progress_cb=None,
+) -> dict:
+    """Scan every channel in a roster group. Returns a full scan payload."""
     now = datetime.datetime.now(datetime.timezone.utc)
     since = window_start(timeframe, now)
     channels = group["channels"]
@@ -703,6 +1060,8 @@ def build_report_text(scan: dict, requester: str) -> str:
     since = scan["since"]
     t = scan["totals"]
     ordered = sorted_results(scan["results"])
+    shared = group.get("mode") == "shared_channel"
+    unit = "creators" if shared else "channels"
 
     L: List[str] = []
     add = L.append
@@ -711,7 +1070,11 @@ def build_report_text(scan: dict, requester: str) -> str:
     add(WIDE)
     add(f"  TRUE CLASSIC  -  {group['label'].upper()}  -  MOD SUMMARY REPORT")
     add(WIDE)
-    add(f"  Group ............. {group['label']}  ({t['channels']} channels)")
+    if shared:
+        add(f"  Channel ........... #{scan.get('channel_name') or group['label']}  "
+            f"({t['channels']} creator(s) seen)")
+    else:
+        add(f"  Group ............. {group['label']}  ({t['channels']} channels)")
     add(f"  Window ............ {tf['long']}   [{since.strftime('%Y-%m-%d %H:%M')} -> {now.strftime('%Y-%m-%d %H:%M')} UTC]")
     add(f"  Generated ......... {now.strftime('%Y-%m-%d %H:%M UTC')}   by {requester}")
     if scan["prev_run"]:
@@ -723,7 +1086,7 @@ def build_report_text(scan: dict, requester: str) -> str:
     add(THIN)
     add("  AT A GLANCE")
     add(f"    Messages in window ......... {t['messages']}  (creators {t['creator_msgs']} | staff {t['staff_msgs']} | bot {t['bot_msgs']})")
-    add(f"    Channels with activity ..... {t['active']} / {t['channels']}")
+    add(f"    {('Creators who posted ........' if shared else 'Channels with activity .....')} {t['active']} / {t['channels']}")
     add(f"    Unanswered creator msgs .... {t['unreplied']}")
     add(f"    Open questions ............. {t['open_questions']}")
     for bk in BUCKET_ORDER:
@@ -745,21 +1108,21 @@ def build_report_text(scan: dict, requester: str) -> str:
         add(f"  {b['emoji']} {b['label']} ({len(group_items)})  -- {b['blurb']}")
         for i, r in enumerate(group_items, start=1):
             wait = f"oldest {r['waiting_human']}" if r.get("waiting_human") else "-"
-            add(f"     {i:>2}. #{r['channel_name']:<26} {wait:<17} {r['reasons'][0] if r['reasons'] else ''}")
+            add(f"     {i:>2}. {r['label'][:27]:<27} {wait:<17} {r['reasons'][0] if r['reasons'] else ''}")
         add("")
     add(WIDE)
     add("")
 
     # ---- worksheet ----
     add("  MOD WORKSHEET  -  copy this block into your notes and tick items off")
-    add("  (only channels that owe someone something -- 🟡 monitor and 🟢 closed are left out)")
+    add(f"  (only {unit} we owe something -- 🟡 monitor and 🟢 closed are left out)")
     add(THIN)
     worksheet_rows = 0
     for r in ordered:
         if r["bucket"] in ("P3", "P4"):
             continue
         for step in r["next_steps"][:3]:
-            add(f"  [ ] #{r['channel_name']:<26} {BUCKETS[r['bucket']]['emoji']}  {step}")
+            add(f"  [ ] {r['label'][:27]:<27} {BUCKETS[r['bucket']]['emoji']}  {step}")
             worksheet_rows += 1
         if r["next_steps"]:
             add("")
@@ -771,7 +1134,10 @@ def build_report_text(scan: dict, requester: str) -> str:
     # ---- how to read ----
     add("  HOW TO USE THIS REPORT")
     add(THIN)
-    add("  1. Clear every 🔴 channel first -- a creator is actively waiting in each one.")
+    if shared:
+        add("  1. Clear every 🔴 creator first -- each one is actively waiting on us.")
+    else:
+        add("  1. Clear every 🔴 channel first -- a creator is actively waiting in each one.")
     add("  2. Then work 🟠: we spoke last and the thread stalled. A one-line nudge is usually enough.")
     add("  3. 🟡 needs a skim only. 🟢 is closed out -- skip it.")
     add("  4. ⚪ means no activity in the window. Two ⚪ reports in a row = decide re-engage or offboard.")
@@ -785,15 +1151,18 @@ def build_report_text(scan: dict, requester: str) -> str:
     add("")
     add("")
 
-    # ---- per channel ----
-    add("  PER-CHANNEL DETAIL")
+    # ---- per subject ----
+    add("  PER-CREATOR DETAIL" if shared else "  PER-CHANNEL DETAIL")
     add("")
     for r in ordered:
         b = BUCKETS[r["bucket"]]
         add(HASH)
-        add(f"  #{r['channel_name']}   -   creator: {r['creator']}   -   {b['emoji']} {b['label']}")
+        add(f"  {r['label']}   -   creator: {r['creator']}   -   {b['emoji']} {b['label']}")
         add(HASH)
-        add(f"  Channel ID ........ {r['channel_id']}")
+        if shared and r.get("user_id"):
+            add(f"  User ID ........... {r['user_id']}   (in #{r['channel_name']})")
+        else:
+            add(f"  Channel ID ........ {r['channel_id']}")
 
         if r["error"]:
             add(f"  STATUS ............ UNREADABLE -- {r['error']}")
@@ -820,6 +1189,8 @@ def build_report_text(scan: dict, requester: str) -> str:
             add(f"  Last creator msg .. {stamp}  ({ago} ago, {author})")
 
         add(f"  Reply state ....... {'; '.join(r['reasons']) if r['reasons'] else 'n/a'}")
+        if r.get("jump_url"):
+            add(f"  Start here ........ {r['jump_url']}")
 
         if r["topics"]:
             add("")

@@ -26,6 +26,7 @@ MODULE_EXTENSIONS = [
     "modules.scheduled_messages",
     "modules.summarizer",
     "modules.quick_announcement",
+    "modules.message_editor",
 ]
 
 
@@ -414,8 +415,8 @@ class ModPanelView(discord.ui.View):
                 "**Member Onboarding**: Scan 30-day un-onboarded members & send deep-link DMs.\n"
                 "**Member Report**: Deploy self-updating daily/weekly/monthly growth reports.\n"
                 "**Scheduled Messages**: Schedule broadcasts with timezones, 5-min intervals & multi-channel targeting.\n"
-                "**Summarizer**: Triage Inner Circle / Academy DM channels — who's waiting on us, what's unanswered, what to do next — "
-                "plus a **Creator Care Brief** with a per-creator card for personalised customer care.\n\n"
+                "**Summarizer**: Triage the community channel creator by creator — who's waiting on us, what's unanswered, what to do next — "
+                "plus a **Creator Care Health Report** with a per-creator card for personalised customer care.\n\n"
                 "🔄 **Refresh Dashboard**: Rebuilds the entire panel — re-queries every metric above and re-arms all buttons.\n"
                 "🔄 **Reload Bot & Updates**: Hot-reloads all bot code, cogs, and slash commands without offline downtime."
             ),

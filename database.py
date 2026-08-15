@@ -107,7 +107,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS summarizer_runs (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 guild_id          INTEGER NOT NULL,
-                group_key         TEXT NOT NULL,   -- 'inner_circle' or 'academy'
+                group_key         TEXT NOT NULL,   -- scan target key, e.g. 'community'
                 timeframe         TEXT NOT NULL,   -- 'today' / '7d' / '30d'
                 requested_by      INTEGER NOT NULL,
                 channels_scanned  INTEGER NOT NULL DEFAULT 0,
@@ -140,6 +140,20 @@ class Database:
                 last_status      TEXT,             -- triage bucket at last report
                 last_reported_at TEXT DEFAULT (datetime('now')),
                 PRIMARY KEY (guild_id, channel_id)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS summarizer_author_state (
+                guild_id         INTEGER NOT NULL,
+                channel_id       INTEGER NOT NULL,   -- the shared channel being scanned
+                author_id        INTEGER NOT NULL,   -- the creator who posted in it
+                group_key        TEXT NOT NULL,
+                author_name      TEXT,              -- display name at last sighting
+                last_message_id  INTEGER,
+                last_message_at  TEXT,              -- ISO 8601 UTC of their newest message
+                last_status      TEXT,              -- triage bucket at last report
+                last_reported_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (guild_id, channel_id, author_id)
             );
             """
         ]

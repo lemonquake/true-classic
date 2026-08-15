@@ -30,6 +30,14 @@ SUMMARY_REPORT_CHANNEL_ID = (
     else 1521574949238603906
 )
 
+# Public channel creators are pointed to for answers asked by more than one creator
+COMMUNITY_CHAT_CHANNEL_ID = (
+    int(os.getenv("COMMUNITY_CHAT_CHANNEL_ID"))
+    if os.getenv("COMMUNITY_CHAT_CHANNEL_ID", "").isdigit()
+    else 1480775954493083719
+)
+COMMUNITY_CHAT_CHANNEL_NAME = os.getenv("COMMUNITY_CHAT_CHANNEL_NAME", "community-chat")
+
 # Parse authorized roles as list of integers
 AUTHORIZED_ROLES = []
 if AUTHORIZED_ROLES_RAW:

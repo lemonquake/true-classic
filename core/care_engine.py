@@ -4,7 +4,7 @@ Author: Aljay Leodones
 Organization: True Classic
 Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 
-Turns a Summarizer scan into a **Creator Care Brief** -- a customer-care oriented
+Turns a Summarizer scan into a **Creator Care Health Report** -- a customer-care oriented
 text file with one quick-reference card per creator channel.
 
 Where the triage report answers "who is waiting on us", this answers the next
@@ -315,8 +315,13 @@ def profile_channel(r: dict, now: datetime.datetime) -> dict:
 
     p = {
         "creator":       r["creator"],
+        "user_id":       r.get("user_id"),
         "channel_id":    r["channel_id"],
         "channel_name":  r["channel_name"],
+        # How this card is addressed: "#channel" in roster mode, "@creator" in the
+        # shared community channel. `mention` is the clickable form for embeds.
+        "label":         r.get("label") or f"#{r['channel_name']}",
+        "mention":       r.get("mention") or f"<#{r['channel_id']}>",
         "bucket":        r["bucket"],
         "error":         r.get("error"),
         "counts":        r["counts"],
@@ -324,6 +329,7 @@ def profile_channel(r: dict, now: datetime.datetime) -> dict:
         "topics":        r["topics"],
         "waiting_human": r.get("waiting_human"),
         "waiting_hours": r.get("waiting_hours"),
+        "jump_url":      r.get("jump_url"),
         "reaction_ack":  r.get("reaction_ack", False),
         "attachments":   r.get("attachments", 0),
         "links":         r.get("links", 0),
@@ -386,6 +392,7 @@ def profile_channel(r: dict, now: datetime.datetime) -> dict:
             rec["ts"].strftime("%m-%d %H:%M"),
             humanize(now - rec["ts"]),
             one_line(rec["content"], 260) + extra,
+            rec.get("jump"),
         ))
     p["missed"] = p["missed"][:8]
 
@@ -809,7 +816,7 @@ def build_group_care(scan: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Care Brief text file
+# Care Health Report text file
 # ---------------------------------------------------------------------------
 
 def _sub(title: str) -> str:
@@ -829,19 +836,24 @@ def build_care_report_text(scan: dict, requester: str) -> str:
     t = scan["totals"]
     profiles = care["profiles"]
     live = care["live"]
+    shared = group.get("mode") == "shared_channel"
 
     L: List[str] = []
     add = L.append
 
     # ================= header =================
     add(WIDE)
-    add(f"  TRUE CLASSIC  -  {group['label'].upper()}  -  CREATOR CARE BRIEF")
+    add(f"  TRUE CLASSIC  -  {group['label'].upper()}  -  CREATOR CARE HEALTH REPORT")
     add(WIDE)
     add("  A quick-reference card per creator, built for personalised customer care.")
-    add("  Read the card before you open the channel -- everything quoted here is something")
-    add("  the creator actually typed, so you can reference it word for word.")
+    add("  Read the card before you reply -- everything quoted here is something the")
+    add("  creator actually typed, so you can reference it word for word.")
     add(THIN)
-    add(f"  Group ............. {group['label']}  ({t['channels']} channels)")
+    if shared:
+        add(f"  Channel ........... #{scan.get('channel_name') or group['label']}  "
+            f"({t['channels']} creator(s) seen)")
+    else:
+        add(f"  Group ............. {group['label']}  ({t['channels']} channels)")
     add(f"  Window ............ {tf['long']}   [{since.strftime('%Y-%m-%d %H:%M')} -> {now.strftime('%Y-%m-%d %H:%M')} UTC]")
     add(f"  Generated ......... {now.strftime('%Y-%m-%d %H:%M UTC')}   by {requester}")
     add(f"  Cards ............. {len(profiles)}  (ordered by who needs the most care first)")
@@ -852,7 +864,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
     add("    3  WHAT THE GROUP TALKS ABOUT")
     add("    4  ASKED BY MULTIPLE CREATORS  ..... fix these once, publicly")
     add("    5  WATCHLIST ............. at risk, going cold, promises owed")
-    add("    6  CREATOR CARE CARDS .... one per channel")
+    add("    6  CREATOR CARE CARDS .... one per creator")
     add("    7  HOW TO USE THIS BRIEF")
     add(WIDE)
     add("")
@@ -863,11 +875,15 @@ def build_care_report_text(scan: dict, requester: str) -> str:
     for i, p in enumerate(profiles, start=1):
         mood = MOODS[p["mood"]]
         waiting = f"waiting {p['waiting_human']}" if p["waiting_human"] else ""
-        add(f"  {i:>2}. {mood['emoji']} {p['creator'][:26]:<26} #{p['channel_name'][:26]:<26} {waiting}".rstrip())
+        # In the shared channel the label is just "@creator", so it would repeat.
+        where = "" if shared else f"{p['label'][:28]:<28}"
+        add(f"  {i:>2}. {mood['emoji']} {p['creator'][:26]:<26} {where} {waiting}".rstrip())
         for line in _wrap_text("      └ ", p["headline"], hang="        "):
             add(line)
         for line in _wrap_parts("        ", p["flags"][:6]):
             add(line)
+        if p["jump_url"]:
+            add(f"        open: {p['jump_url']}")
         add("")
     add("  Legend: 😠 unhappy  😕 patience thin  😐 neutral  🙂 warm  😄 positive  🔇 said nothing")
     add(WIDE)
@@ -877,7 +893,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
     add("  2  GROUP PULSE")
     add(_sub("the temperature of the whole group"))
     add(f"  Messages in window ....... {t['messages']}  (creators {t['creator_msgs']} | staff {t['staff_msgs']} | bot {t['bot_msgs']})")
-    add(f"  Channels with activity ... {t['active']} / {t['channels']}")
+    add(f"  {('Creators who posted ...... ' if shared else 'Channels with activity ... ')}{t['active']} / {t['channels']}")
     add(f"  Creators waiting on us ... {sum(1 for p in live if p['missed'])}  ({t['unreplied']} unanswered message(s))")
     add(f"  Open questions ........... {sum(len(p.get('open_questions') or []) for p in live)}")
     add("")
@@ -892,7 +908,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
         L.extend(_wrap_text(
             "  OUR RESPONSE SPEED ....... ",
             f"typical first reply {humanize(care['reply_median_group'])} "
-            f"(median of {care['reply_channels']} channel(s) where we answered, "
+            f"(median of {care['reply_channels']} {'creator' if shared else 'channel'}(s) where we answered, "
             f"{care['reply_samples']} reply pair(s))",
         ))
         slowest = max(
@@ -900,7 +916,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
             key=lambda p: p["reply_slowest"], default=None,
         )
         if slowest:
-            add(f"  SLOWEST SINGLE REPLY ..... {humanize(slowest['reply_slowest'])} in #{slowest['channel_name']}")
+            add(f"  SLOWEST SINGLE REPLY ..... {humanize(slowest['reply_slowest'])} for {slowest['label']}")
     else:
         add("  OUR RESPONSE SPEED ....... no creator message was answered inside this window")
     add(WIDE)
@@ -999,14 +1015,15 @@ def build_care_report_text(scan: dict, requester: str) -> str:
         bucket = engine.BUCKETS[p["bucket"]]
 
         add(HASH)
-        add(f"  CARE CARD {idx:02d}/{total:02d}   -   {p['creator']}   -   #{p['channel_name']}")
+        where = f"#{p['channel_name']}" if shared else p["label"]
+        add(f"  CARE CARD {idx:02d}/{total:02d}   -   {p['creator']}   -   {where}")
         add(HASH)
 
         if p["bucket"] == "XX":
             add(f"  STATUS ......... 🚫 UNREADABLE -- {p['error']}")
             add(f"  CHANNEL ID ..... {p['channel_id']}")
             add("  FIX ............ Give the bot View Channel + Read Message History here, or update")
-            add("                   the roster in core/inner_groups.py if the channel moved.")
+            add("                   the channel id in core/inner_groups.py if it moved.")
             add("")
             add("")
             continue
@@ -1032,7 +1049,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
             stamp, cls, author, _prev = p["last_msg"]
             add(f"    Last activity ....... {stamp}  by {author} ({cls.upper()})")
         if p["days_silent"] is not None and (c["total"] == 0 or p["days_silent"] >= 3):
-            add(f"    Channel quiet for ... {p['days_silent']:.1f} day(s) since the newest message")
+            add(f"    Quiet for ........... {p['days_silent']:.1f} day(s) since their newest message")
         if p["last_staff"]:
             stamp, ago, author, _prev = p["last_staff"]
             add(f"    Our last reply ...... {stamp}  ({ago} ago, {author})")
@@ -1050,6 +1067,8 @@ def build_care_report_text(scan: dict, requester: str) -> str:
             add(f"    Best time to reach .. {start:02d}:00-{end:02d}:00 UTC ({cnt} of their messages){days}")
         if p["style"]:
             L.extend(_wrap_text("    How they write ...... ", "; ".join(p["style"])))
+        if p["jump_url"]:
+            add(f"    Start here .......... {p['jump_url']}")
         add("")
 
         # -- topics
@@ -1069,8 +1088,10 @@ def build_care_report_text(scan: dict, requester: str) -> str:
         # -- missed
         if p["missed"]:
             add(_sub("MESSAGES WE MISSED (verbatim, oldest first)"))
-            for i, (stamp, ago, text) in enumerate(p["missed"], start=1):
+            for i, (stamp, ago, text, jump) in enumerate(p["missed"], start=1):
                 L.extend(_wrap_text(f"    {i}. [{stamp} • {ago} ago] ", f'"{text}"', hang="       "))
+                if jump:
+                    add(f"       └ open: {jump}")
             add("")
 
         open_qs = p.get("open_questions") or []
@@ -1154,7 +1175,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
     add("     for anyone unhappy; reverse it for anyone warm.")
     add("  4. Never send the DRAFT OPENER as-is. Every {{placeholder}} is a fact only you have.")
     add("  5. Anything under ASKED BY MULTIPLE CREATORS belongs in a pinned post or FAQ, not in")
-    add("     five separate DMs.")
+    add("     five separate replies.")
     add("  6. After you reply, post the outcome in-channel so the next mod inherits the context")
     add("     and the next brief reads clean.")
     add("")
@@ -1162,7 +1183,7 @@ def build_care_report_text(scan: dict, requester: str) -> str:
     add("  keyword model -- no AI guesswork, same input always gives the same brief. It is a")
     add("  preparation aid: the conversation itself is still the source of truth.")
     add(WIDE)
-    add(f"  END OF CARE BRIEF  -  {group['label']}  -  {tf['long']}  -  {now.strftime('%Y-%m-%d %H:%M UTC')}")
+    add(f"  END OF CARE HEALTH REPORT  -  {group['label']}  -  {tf['long']}  -  {now.strftime('%Y-%m-%d %H:%M UTC')}")
     add(f"  True Classic Community Operations Bot  -  requested by {requester}")
     add(WIDE)
 
@@ -1172,4 +1193,4 @@ def build_care_report_text(scan: dict, requester: str) -> str:
 def care_filename(scan: dict) -> str:
     group = scan["group"]
     stamp = scan["now"].strftime("%Y-%m-%d_%H%M")
-    return f"{group['slug']}_care_brief_{scan['timeframe']}_{stamp}.txt"
+    return f"{group['slug']}_care_health_report_{scan['timeframe']}_{stamp}.txt"

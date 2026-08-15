@@ -59,13 +59,17 @@ class QuickAnnouncementState:
 
     def build_announcement_embed(self) -> discord.Embed:
         embed = discord.Embed(
-            title=self.title if self.title else "📢 Quick Announcement",
-            description=self.description if self.description else "*(No description provided)*",
+            title=self.title or None,
+            description=self.description or None,
             color=self.color
         )
         if self.image_url:
             embed.set_image(url=self.image_url)
         embed.set_footer(text="True Classic Announcements")
+        # Discord rejects a fully empty embed - drop in a zero-width space so a
+        # blank announcement still sends instead of erroring out.
+        if not (self.title or self.description or self.image_url):
+            embed.description = "​"
         return embed
 
     def to_payload_dict(self, user_id: int) -> Dict:
@@ -74,8 +78,8 @@ class QuickAnnouncementState:
             "content": self.ping_tag if self.ping_tag != "None" else None,
             "embeds": [
                 {
-                    "title": self.title,
-                    "description": self.description,
+                    "title": self.title or None,
+                    "description": self.description or None,
                     "color": self.color,
                     "image_url": self.image_url,
                     "footer_text": "True Classic Announcements",

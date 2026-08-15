@@ -18,9 +18,9 @@ The **True Classic Bot** is a custom, fully integrated Discord Operations & Comm
    - Live system health metrics, latency, database status, and pending broadcasts.
    - Remains persistent across bot reboots and gateway reconnects.
 
-2. **Inner Group Triage & Summarizer (`/summarizer`)**
-   - Automatically scans Inner Circle & Academy creator channels for pending/unanswered queries.
-   - Generates deterministic triage reports and **Creator Care Briefs**.
+2. **Community Triage & Summarizer (`/summarizer`)**
+   - Reads the community channel and splits it per creator to find pending/unanswered queries.
+   - Generates deterministic triage reports and **Creator Care Health Reports**.
 
 3. **Custom Onboarding System (`/onboarding`)**
    - Deep-link DMs, group selection modals, and automated member scanning (0–30 days).
@@ -33,6 +33,10 @@ The **True Classic Bot** is a custom, fully integrated Discord Operations & Comm
 
 6. **Embed Script Engine & Interactive Editor (`/embededitor`)**
    - Dynamic variable hydrators, multi-embed pagination, and brand design system consistency.
+
+7. **Live Message Editor (right-click ▸ Apps ▸ `✏️ Edit Bot Message`)**
+   - Re-opens any message the bot already posted inside the full Embed Editor surface.
+   - Edits content, author, images, color, fields, and footer, then writes back to the original message.
 
 ---
 

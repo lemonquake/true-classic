@@ -1,15 +1,15 @@
 """
-True Classic Bot - Inner Group Summarizer Module
+True Classic Bot - Community Summarizer Module
 Author: Aljay Leodones
 Organization: True Classic
 Details: Prepared for True Classic - The features of this Bot are original and can't be found in any other 3rd-party bots like Mee6, Dyno, etc
 
-Mod Panel -> Summarizer -> pick group (Inner Circle / Academy) -> pick window
-(Today / 7 Days / 1 Month) -> the bot scans every creator channel in that group and
-publishes a triage report to the reports channel with two .txt deliverables:
+Mod Panel -> Summarizer -> pick window (Today / 7 Days / 1 Month) -> the bot reads
+the community channel, builds one card per creator who posted in it, and publishes a
+triage report to the reports channel with two .txt deliverables:
 
   1. SUMMARY REPORT -- operational triage: who is waiting, what to do next.
-  2. CREATOR CARE BRIEF -- one care card per creator for customer-care work:
+  2. CREATOR CARE HEALTH REPORT -- one care card per creator for customer-care work:
      their most common topics, repeat asks, missed messages, issues, the promises
      we made them, personal context, wins, our response speed, and a draft opener.
 """
@@ -82,12 +82,13 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
     else:
         color = embed_builder.COLOR_SUCCESS
 
+    where = f"<#{group['channel_id']}>" if group.get("mode") == "shared_channel" else group["label"]
     embed = embed_builder.base_embed(
         title=f"{group['emoji']} {group['label']} • Summary Report • {tf['label']}",
         description=(
-            f"Scanned **{t['channels']}** creator channel(s) over **{tf['long'].lower()}**.\n"
+            f"Scanned {where} — **{t['channels']}** creator(s) over **{tf['long'].lower()}**.\n"
             f"📄 **Summary report** — triage, worksheet, conversation trails.\n"
-            f"🧡 **Creator Care Brief** — one care card per creator for personalised replies.\n"
+            f"🧡 **Creator Care Health Report** — one care card per creator for personalised replies.\n"
             f"*Both files are attached below.*"
         ),
         color=color
@@ -110,7 +111,7 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
         f"Messages     {t['messages']:>5}\n"
         f"  creators   {t['creator_msgs']:>5}\n"
         f"  staff      {t['staff_msgs']:>5}\n"
-        f"Active chans {t['active']:>3}/{t['channels']}\n"
+        f"Active       {t['active']:>3}/{t['channels']}\n"
         f"Unanswered   {t['unreplied']:>5}\n"
         f"Open Qs      {t['open_questions']:>5}\n"
         f"New since    {t['new_messages']:>5}\n"
@@ -125,9 +126,10 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
             b = engine.BUCKETS[r["bucket"]]
             wait = f" • waiting **{r['waiting_human']}**" if r.get("waiting_human") else ""
             qs = f" • {len(r['open_questions'])} open Q" if r["open_questions"] else ""
-            lines.append(f"{b['emoji']} <#{r['channel_id']}>{wait}{qs}")
+            jump = f" [↗]({r['jump_url']})" if r.get("jump_url") else ""
+            lines.append(f"{b['emoji']} {r['mention']}{jump}{wait}{qs}")
         embed.add_field(
-            name=f"⏰ Action Queue ({len(urgent)} channel(s) need a mod)",
+            name=f"⏰ Action Queue ({len(urgent)} creator(s) need a mod) • ↗ opens their message",
             value=_truncate_field(lines),
             inline=False
         )
@@ -142,7 +144,8 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
     for r in ordered:
         if r["bucket"] not in ("P1", "P2") or not r["next_steps"]:
             continue
-        top_step_lines.append(f"**#{r['channel_name']}** — {r['next_steps'][0]}")
+        jump = f" [↗]({r['jump_url']})" if r.get("jump_url") else ""
+        top_step_lines.append(f"{r['mention']}{jump} — {r['next_steps'][0]}")
         if len(top_step_lines) >= 5:
             break
     if top_step_lines:
@@ -151,13 +154,13 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
     topic_totals = {}
     for r in scan["results"]:
         for name, emoji, hits in r["topics"]:
-            entry = topic_totals.setdefault(name, {"emoji": emoji, "hits": 0, "channels": 0})
+            entry = topic_totals.setdefault(name, {"emoji": emoji, "hits": 0, "creators": 0})
             entry["hits"] += hits
-            entry["channels"] += 1
+            entry["creators"] += 1
     if topic_totals:
         top_topics = sorted(topic_totals.items(), key=lambda kv: kv[1]["hits"], reverse=True)[:6]
         lines = [
-            f"{v['emoji']} **{name}** — {v['hits']} msg across {v['channels']} channel(s)"
+            f"{v['emoji']} **{name}** — {v['hits']} msg across {v['creators']} creator(s)"
             for name, v in top_topics
         ]
         embed.add_field(name="🗂️ What The Group Is Talking About", value=_truncate_field(lines), inline=False)
@@ -166,7 +169,13 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
     if dormant:
         embed.add_field(
             name=f"⚪ Silent In This Window ({len(dormant)})",
-            value=_truncate_field([f"<#{r['channel_id']}>" for r in dormant], 900),
+            value=_truncate_field(
+                [
+                    r["mention"] + (f" [↗]({r['jump_url']})" if r.get("jump_url") else "")
+                    for r in dormant
+                ],
+                900,
+            ),
             inline=False
         )
 
@@ -174,7 +183,7 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
         embed.add_field(
             name=f"🚫 Needs Fixing ({unreadable})",
             value=_truncate_field(
-                [f"`#{r['channel_name']}` — {r['error']}" for r in ordered if r["bucket"] == "XX"]
+                [f"`{r['label']}` — {r['error']}" for r in ordered if r["bucket"] == "XX"]
             ),
             inline=False
         )
@@ -184,7 +193,7 @@ def build_summary_embed(scan: dict, requester: discord.abc.User) -> discord.Embe
     embed.set_footer(
         text=(
             f"Requested by {requester.display_name} • {now.strftime('%Y-%m-%d %H:%M UTC')} • "
-            "Summary .txt = what to do • Care Brief .txt = what to say"
+            "Summary .txt = what to do • Care Health Report .txt = what to say"
         )
     )
     return embed
@@ -207,7 +216,7 @@ def _add_care_fields(embed: discord.Embed, scan: dict) -> None:
         if c["reply_median_group"] is not None else "no reply measured in this window"
     )
     embed.add_field(
-        name="🧡 Care Pulse",
+        name="​",
         value=(
             f"**Mood:** {'  '.join(mood_bits)}\n"
             f"**Our speed:** {speed}\n"
@@ -222,20 +231,21 @@ def _add_care_fields(embed: discord.Embed, scan: dict) -> None:
         lines = []
         for i, p in enumerate(top_cards, start=1):
             m = care.MOODS[p["mood"]]
-            lines.append(f"`{i}.` {m['emoji']} <#{p['channel_id']}> — {p['headline']}")
+            jump = f" [↗]({p['jump_url']})" if p.get("jump_url") else ""
+            lines.append(f"`{i}.` {p['mention']}{jump} — {m['label']} • {p['headline']}")
         embed.add_field(
-            name="🎯 Care Queue (read their card before replying)",
+            name="Care Queue (read their card before replying) • ↗ opens their message",
             value=_truncate_field(lines),
             inline=False
         )
 
     if c["recurring"]:
         lines = [
-            f"{v['emoji']} **{name}** — asked by {len(v['creators'])} creator(s), {v['asks']} question(s)"
+            f"• **{name}** — asked by {len(v['creators'])} creator(s), {v['asks']} question(s)"
             for name, v in c["recurring"][:5]
         ]
         embed.add_field(
-            name="🔁 Asked By Multiple Creators (answer once, publicly)",
+            name=f"Asked By Multiple Creators (answer once, publicly in #{config.COMMUNITY_CHAT_CHANNEL_NAME})",
             value=_truncate_field(lines),
             inline=False
         )
@@ -243,18 +253,18 @@ def _add_care_fields(embed: discord.Embed, scan: dict) -> None:
     highlight_lines = []
     if c["wins"]:
         highlight_lines.append(
-            f"🏆 **{len(c['wins'])}** creator(s) shared a win worth thanking them for"
+            f"• **{len(c['wins'])}** creator(s) shared a win worth thanking them for"
         )
     if c["personal"]:
         highlight_lines.append(
-            f"🧍 **{len(c['personal'])}** shared personal context — open with it, not with business"
+            f"• **{len(c['personal'])}** shared personal context — open with it, not with business"
         )
     if c["promises"]:
         highlight_lines.append(
-            f"🤝 **{len(c['promises'])}** are waiting on something we said we'd do"
+            f"• **{len(c['promises'])}** are waiting on something we said we'd do"
         )
     if highlight_lines:
-        embed.add_field(name="✨ Personalisation Hooks", value="\n".join(highlight_lines), inline=False)
+        embed.add_field(name="Personalisation Hooks", value="\n".join(highlight_lines), inline=False)
 
 
 def build_report_file(scan: dict, requester: discord.abc.User) -> discord.File:
@@ -275,15 +285,16 @@ def build_scan_files(scan: dict, requester: discord.abc.User) -> List[discord.Fi
 
 
 def build_care_embed(scan: dict, requester: discord.abc.User) -> discord.Embed:
-    """Standalone digest for the Care Brief when it is generated on its own."""
+    """Standalone digest for the Care Health Report when it is generated on its own."""
     c = care.build_group_care(scan)
     group = scan["group"]
     tf = engine.TIMEFRAMES[scan["timeframe"]]
 
+    where = f" in <#{group['channel_id']}>" if group.get("mode") == "shared_channel" else ""
     embed = embed_builder.base_embed(
-        title=f"🧡 {group['label']} • Creator Care Brief • {tf['label']}",
+        title=f"🧡 {group['label']} • Creator Care Health Report • {tf['label']}",
         description=(
-            f"One care card per creator across **{len(c['profiles'])}** channel(s).\n"
+            f"One care card for each of the **{len(c['profiles'])}** creator(s){where}.\n"
             "Each card carries their most common topics, repeat asks, the messages we missed, "
             "issues in their own words, promises we made, personal context, wins, our response "
             "speed, when they're online, and a draft opener."
@@ -304,25 +315,6 @@ def build_care_embed(scan: dict, requester: discord.abc.User) -> discord.Embed:
 # Hub view
 # ---------------------------------------------------------------------------
 
-class GroupSelect(Select):
-    def __init__(self, current: Optional[str]):
-        options = []
-        for key in inner_groups.all_group_keys():
-            g = inner_groups.GROUPS[key]
-            options.append(discord.SelectOption(
-                label=g["label"],
-                value=key,
-                description=f"{len(g['channels'])} creator channel(s)",
-                emoji=g["emoji"],
-                default=(key == current),
-            ))
-        super().__init__(placeholder="Step 1 — choose a group…", options=options, min_values=1, max_values=1, row=0)
-
-    async def callback(self, interaction: discord.Interaction):
-        self.view.group_key = self.values[0]
-        await self.view.refresh(interaction)
-
-
 class TimeframeSelect(Select):
     def __init__(self, current: Optional[str]):
         options = []
@@ -335,7 +327,7 @@ class TimeframeSelect(Select):
                 emoji=tf["emoji"],
                 default=(key == current),
             ))
-        super().__init__(placeholder="Step 2 — choose a window…", options=options, min_values=1, max_values=1, row=1)
+        super().__init__(placeholder="Choose a window…", options=options, min_values=1, max_values=1, row=1)
 
     async def callback(self, interaction: discord.Interaction):
         self.view.timeframe = self.values[0]
@@ -347,17 +339,18 @@ class SummarizerHubView(SecuredView):
         super().__init__(timeout=600)
         self.bot = bot
         self.parent_panel_view = parent_panel_view
-        self.group_key = group_key
+        # One scan target now: the community channel. Kept as an attribute so a
+        # second group only needs adding back to inner_groups.GROUPS.
+        self.group_key = group_key or inner_groups.DEFAULT_GROUP_KEY
         self.timeframe = timeframe
         self.running = False
         self._build_items()
 
     def _build_items(self):
         self.clear_items()
-        self.add_item(GroupSelect(self.group_key))
         self.add_item(TimeframeSelect(self.timeframe))
 
-        ready = self.group_key is not None
+        ready = self.group_key in inner_groups.GROUPS
 
         run_btn = Button(
             label="📤 Generate & Post Report",
@@ -378,7 +371,7 @@ class SummarizerHubView(SecuredView):
         self.add_item(preview_btn)
 
         care_btn = Button(
-            label="🧡 Care Brief Only (only me)",
+            label="🧡 Care Health Report Only (only me)",
             style=ButtonStyle.blurple,
             disabled=not ready,
             row=3,
@@ -398,30 +391,28 @@ class SummarizerHubView(SecuredView):
         return guild.get_channel(config.SUMMARY_REPORT_CHANNEL_ID)
 
     async def build_hub_embed(self, guild: discord.Guild) -> discord.Embed:
+        g = inner_groups.GROUPS[self.group_key]
         embed = embed_builder.base_embed(
-            title="🧠 Inner Group Summarizer",
+            title="🧠 Community Summarizer",
             description=(
-                "Scans every creator channel in a group and posts a triage digest with **two** "
-                "text deliverables: a **Summary Report** (what to do) and a **Creator Care Brief** "
-                "(what to say, creator by creator)."
+                f"Reads <#{g['channel_id']}> and builds one card per creator who posted, "
+                "then posts a triage digest with **two** text deliverables: a **Summary Report** "
+                "(what to do) and a **Creator Care Health Report** (what to say, creator by creator)."
             ),
             color=embed_builder.COLOR_BRAND
         )
-
-        if self.group_key:
-            g = inner_groups.GROUPS[self.group_key]
-            group_line = f"{g['emoji']} **{g['label']}** — {len(g['channels'])} channel(s)"
-        else:
-            group_line = "*not selected*"
 
         tf = engine.TIMEFRAMES[self.timeframe]
         report_channel = self._report_channel(guild)
         dest = report_channel.mention if report_channel else f"`{config.SUMMARY_REPORT_CHANNEL_ID}` ⚠️ *not found*"
 
+        scan_channel = guild.get_channel(g["channel_id"])
+        source = scan_channel.mention if scan_channel else f"`{g['channel_id']}` ⚠️ *not found*"
+
         embed.add_field(
             name="⚙️ Current Selection",
             value=(
-                f"**Group:** {group_line}\n"
+                f"**Scanning:** {g['emoji']} {source}\n"
                 f"**Window:** {tf['emoji']} {tf['long']}\n"
                 f"**Report goes to:** {dest}"
             ),
@@ -429,13 +420,13 @@ class SummarizerHubView(SecuredView):
         )
 
         embed.add_field(
-            name="🚦 How Channels Get Sorted",
+            name="🚦 How Creators Get Sorted",
             value=(
-                "🔴 **Needs reply now** — creator spoke last and we never answered\n"
+                "🔴 **Needs reply now** — they spoke last and we never answered\n"
                 "🟠 **Follow-up** — we spoke last, thread went quiet, or a blocker was raised\n"
-                "🟡 **Monitor** — active and healthy, ball is in the creator's court\n"
+                "🟡 **Monitor** — active and healthy, ball is in their court\n"
                 "🟢 **No action** — closed out\n"
-                "⚪ **No activity** — nothing in the window"
+                "⚪ **No activity** — posted before, nothing in this window"
             ),
             inline=False
         )
@@ -443,9 +434,9 @@ class SummarizerHubView(SecuredView):
         embed.add_field(
             name="📄 File 1 — Summary Report (operations)",
             value=(
-                "▸ **Triage board** — every channel ranked, longest wait first\n"
+                "▸ **Triage board** — every creator ranked, longest wait first\n"
                 "▸ **Mod worksheet** — a `[ ]` checklist you can paste into your notes\n"
-                "▸ **Per channel** — topics discussed, quoted unanswered questions, "
+                "▸ **Per creator** — topics discussed, quoted unanswered questions, "
                 "conversation trail, and numbered next steps\n"
                 "▸ **New since last report** — what moved since the previous run"
             ),
@@ -453,7 +444,7 @@ class SummarizerHubView(SecuredView):
         )
 
         embed.add_field(
-            name="🧡 File 2 — Creator Care Brief (customer care)",
+            name="🧡 File 2 — Creator Care Health Report (customer care)",
             value=(
                 "One **care card per creator** so a reply never reads copy-pasted:\n"
                 "▸ **Mood + volume tier** and a one-line *read this first*\n"
@@ -475,17 +466,16 @@ class SummarizerHubView(SecuredView):
         if rows:
             lines = []
             for row in rows:
-                g = inner_groups.GROUPS.get(row["group_key"], {"short": row["group_key"]})
+                grp = inner_groups.GROUPS.get(row["group_key"], {"short": row["group_key"]})
                 lines.append(
-                    f"`#{row['id']}` {g['short']} • {row['timeframe']} • "
+                    f"`#{row['id']}` {grp['short']} • {row['timeframe']} • "
                     f"{row['created_at']} UTC • 🔴{row['needs_reply']} 🟠{row['follow_up']} ⚪{row['no_activity']}"
                 )
             embed.add_field(name="🧾 Recent Runs", value="\n".join(lines), inline=False)
 
-        if self.group_key:
-            est = max(1, round(len(inner_groups.GROUPS[self.group_key]["channels"]) * 0.6))
-            embed.set_footer(text=f"True Classic • Scan takes roughly {est}s — the bot will keep you posted")
-
+        embed.set_footer(
+            text="True Classic • A busy month can take a minute to read — the bot will keep you posted"
+        )
         return embed
 
     async def refresh(self, interaction: discord.Interaction):
@@ -506,22 +496,26 @@ class SummarizerHubView(SecuredView):
         group = inner_groups.GROUPS[self.group_key]
         tf = engine.TIMEFRAMES[self.timeframe]
 
+        if group.get("mode") == "shared_channel":
+            opening = f"Reading <#{group['channel_id']}> over {tf['long'].lower()}."
+        else:
+            opening = f"Reading **{len(group['channels'])}** {group['label']} channel(s) over {tf['long'].lower()}."
+
         status = await interaction.followup.send(
-            embed=embed_builder.info_embed(
-                "Scanning…",
-                f"Reading **{len(group['channels'])}** {group['label']} channel(s) over {tf['long'].lower()}."
-            ),
+            embed=embed_builder.info_embed("Scanning…", opening),
             ephemeral=True,
             wait=True
         )
 
         async def progress(done: int, total: int, current: str):
-            filled = "█" * int((done / total) * 20)
-            empty = "░" * (20 - len(filled))
-            await status.edit(embed=embed_builder.info_embed(
-                "Scanning…",
-                f"`{filled}{empty}` **{done}/{total}**\nLast read: `{current}`"
-            ))
+            if not total:
+                # Fetch phase -- no denominator yet, just show what has been read.
+                body = f"⏳ {current}…"
+            else:
+                filled = "█" * int((done / total) * 20)
+                empty = "░" * (20 - len(filled))
+                body = f"`{filled}{empty}` **{done}/{total}**\nLast read: `{current}`"
+            await status.edit(embed=embed_builder.info_embed("Scanning…", body))
 
         print(f"[Summarizer] {interaction.user} started {self.group_key}/{self.timeframe} scan")
         try:
@@ -533,7 +527,7 @@ class SummarizerHubView(SecuredView):
 
         await status.edit(embed=embed_builder.success_embed(
             "Scan Complete",
-            f"Read **{scan['totals']['messages']}** message(s) across **{scan['totals']['channels']}** channel(s)."
+            f"Read **{scan['totals']['messages']}** message(s) from **{scan['totals']['channels']}** creator(s)."
         ))
         return scan
 
@@ -600,7 +594,7 @@ class SummarizerHubView(SecuredView):
                     f"🔴 **{t['buckets']['P1']}** need a reply now • "
                     f"🟠 **{t['buckets']['P2']}** need a follow-up • "
                     f"⚪ **{t['buckets']['P5']}** silent\n"
-                    f"🧡 Care Brief: **{len(c['at_risk'])}** at risk • "
+                    f"🧡 Care Health Report: **{len(c['at_risk'])}** at risk • "
                     f"**{len(c['promises'])}** promise(s) owed • "
                     f"**{len(c['recurring'])}** recurring ask(s)"
                 ),
@@ -631,7 +625,7 @@ class SummarizerHubView(SecuredView):
             self.running = False
 
     async def run_care_only(self, interaction: discord.Interaction):
-        """Care Brief on its own — for a mod about to sit down and answer creators."""
+        """Care Health Report on its own — for a mod about to sit down and answer creators."""
         if self.running:
             await interaction.response.send_message("A scan is already running — hold on.", ephemeral=True)
             return
@@ -642,7 +636,7 @@ class SummarizerHubView(SecuredView):
             if scan is None:
                 return
             await interaction.followup.send(
-                content="**Creator Care Brief — only you can see this. Nothing was posted.**",
+                content="**Creator Care Health Report — only you can see this. Nothing was posted.**",
                 embed=build_care_embed(scan, interaction.user),
                 file=build_care_file(scan, interaction.user),
                 ephemeral=True
@@ -690,7 +684,7 @@ class SummarizerHubView(SecuredView):
                 )
             lines.append(
                 f"`#{row['id']}` {g['emoji']} **{g.get('label')}** • {tf['label']} • {row['created_at']} UTC\n"
-                f"　▸ {row['channels_scanned']} channels, {row['messages_scanned']} msgs • "
+                f"　▸ {row['channels_scanned']} creators, {row['messages_scanned']} msgs • "
                 f"🔴{row['needs_reply']} 🟠{row['follow_up']} ⚪{row['no_activity']} • <@{row['requested_by']}>{link}"
             )
 
@@ -715,17 +709,10 @@ class SummarizerCog(commands.Cog):
 
     @discord.app_commands.command(
         name="summarize",
-        description="Generate a mod triage summary for the Inner Circle or Academy DM channels"
+        description="Generate a mod triage summary for the community channel"
     )
-    @discord.app_commands.describe(
-        group="Which inner group to scan",
-        window="How far back to scan"
-    )
+    @discord.app_commands.describe(window="How far back to scan")
     @discord.app_commands.choices(
-        group=[
-            discord.app_commands.Choice(name="Inner Circle DM's", value="inner_circle"),
-            discord.app_commands.Choice(name="Academy DM's", value="academy"),
-        ],
         window=[
             discord.app_commands.Choice(name="Today", value="today"),
             discord.app_commands.Choice(name="Last 7 Days", value="7d"),
@@ -735,7 +722,6 @@ class SummarizerCog(commands.Cog):
     async def summarize(
         self,
         interaction: discord.Interaction,
-        group: discord.app_commands.Choice[str],
         window: discord.app_commands.Choice[str],
     ):
         has_role = False
@@ -752,13 +738,13 @@ class SummarizerCog(commands.Cog):
             )
             return
 
-        view = SummarizerHubView(self.bot, None, group_key=group.value, timeframe=window.value)
+        view = SummarizerHubView(self.bot, None, timeframe=window.value)
         await interaction.response.defer(ephemeral=True)
         await view.generate_and_post(interaction, refresh_hub=False)
 
     @discord.app_commands.command(
         name="summarizer",
-        description="Open the Inner Group Summarizer hub"
+        description="Open the Community Summarizer hub"
     )
     async def summarizer_hub(self, interaction: discord.Interaction):
         has_role = False
